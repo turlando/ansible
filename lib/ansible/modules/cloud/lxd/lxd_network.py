@@ -1,17 +1,18 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
-# (c) 2016, Sofiane Medjkoune <sofiane@medjkoune.fr> based on lxd_profile by Hiroaki Nakamura <hnakamur@gmail.com>
-# GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
+# (c) 2016, Sofiane Medjkoune <sofiane@medjkoune.fr>
+# based on lxd_profile by Hiroaki Nakamura <hnakamur@gmail.com>
+# GNU General Public License v3.0+
+# (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, division, print_function
-__metaclass__ = type
+from __future__ import print_function
 
-
-ANSIBLE_METADATA = {'metadata_version': '1.1',
-                    'status': ['preview'],
-                    'supported_by': 'community'}
-
+ANSIBLE_METADATA = {
+    'metadata_version': '1.1',
+    'status': ['preview'],
+    'supported_by': 'community'
+}
 
 DOCUMENTATION = '''
 ---
@@ -142,6 +143,7 @@ EXAMPLES = '''
         state: present
 '''
 
+
 RETURN = '''
 old_state:
   description: The old state of the network
@@ -160,212 +162,321 @@ actions:
   sample: '["create"]'
 '''
 
+
 import os
+import ast
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.lxd import LXDClient, LXDClientException
 
 
-# NETWORKS_STATES is a list for states supported.
-NETWORKS_STATES = [
-    'present', 'absent'
+HOME = os.environ['HOME']
+
+KEY_ACTIONS = 'actions'
+KEY_CHANGED = 'changed'
+KEY_LOGS = 'logs'
+KEY_MSG = 'msg'
+KEY_OLD_STATE = 'old_state'
+
+ACTION_CREATE = 'create'
+ACTION_RENAME = 'rename'
+ACTION_UPDATE = 'update'
+ACTION_DELETE = 'delete'
+
+KEY_DEFAULT = 'default'
+KEY_CHOICES = 'choices'
+KEY_REQUIRED = 'required'
+KEY_TYPE = 'type'
+
+TYPE_STR = 'str'
+
+KEY_IPV4_ADDR = 'ipv4.address'
+KEY_IPV4_NAT = 'ipv4.nat'
+KEY_IPV6_ADDR = 'ipv6.address'
+
+VAL_AUTO = 'auto'
+VAL_NONE = 'none'
+VAL_TRUE = 'true'
+VAL_ERROR = 'error'
+
+STATE_PRESENT = 'present'
+STATE_ABSENT = 'absent'
+
+KEY_METADATA = 'metadata'
+
+PARAM_NAME = 'name'
+PARAM_STATE = 'state'
+PARAM_DESCRIPTION = 'description'
+PARAM_NEW_NAME = 'new_name'
+PARAM_URL = 'url'
+PARAM_KEY_FILE = 'key_file'
+PARAM_CERT_FILE = 'cert_file'
+PARAM_TRUST_PASSWORD = 'trust_password'
+PARAM_CONFIG = 'config'
+
+KEYS_LXD_CONFIG = [
+    PARAM_NAME,
+    PARAM_DESCRIPTION,
+    PARAM_CONFIG
 ]
 
-# CONFIG_PARAMS is a list of config attribute names.
-CONFIG_PARAMS = [
-    'config', 'description'
-]
+DEFAULT_URL = 'unix:/var/lib/lxd/unix.socket'
+DEFAULT_KEY_FILE = '{}/.config/lxc/client.key'.format(HOME)
+DEFAULT_CERT_FILE = '{}/.config/lxc/client.crt'.format(HOME)
 
-# NETWORKS_CONFIG_DEFAULTS is the default config deployed.
-NETWORKS_CONFIG_DEFAULTS = {
-    'ipv4.address': 'none',
-    'ipv6.address': 'none'
+DEFAULT_LXD_CONFIG = {
+    KEY_IPV4_NAT: VAL_TRUE,
+    KEY_IPV4_ADDR: VAL_NONE,
+    KEY_IPV6_ADDR: VAL_NONE
+}
+
+ARGUMENT_SPEC = {
+    PARAM_NAME: {
+        KEY_TYPE: TYPE_STR,
+        KEY_REQUIRED: True
+    },
+
+    PARAM_NEW_NAME: {
+        KEY_TYPE: TYPE_STR
+    },
+
+    PARAM_CONFIG: {
+        KEY_TYPE: TYPE_STR
+    },
+
+    PARAM_DESCRIPTION: {
+        KEY_TYPE: TYPE_STR
+    },
+
+    PARAM_STATE: {
+        KEY_CHOICES: [
+            STATE_PRESENT,
+            STATE_ABSENT
+        ],
+        KEY_DEFAULT: STATE_PRESENT
+    },
+
+    PARAM_URL: {
+        KEY_TYPE: TYPE_STR,
+        KEY_DEFAULT: DEFAULT_URL
+    },
+
+    PARAM_KEY_FILE: {
+        KEY_TYPE: TYPE_STR,
+        KEY_DEFAULT: DEFAULT_KEY_FILE
+    },
+
+    PARAM_CERT_FILE: {
+        KEY_TYPE: TYPE_STR,
+        KEY_DEFAULT: DEFAULT_CERT_FILE
+    },
+
+    PARAM_TRUST_PASSWORD: {
+        KEY_TYPE: TYPE_STR
+    }
 }
 
 
-class LXDNetworkManagement(object):
-    def __init__(self, module):
-        """Management of LXC containers via Ansible.
+def lxd_get_network(client, name):
+    return client.do(
+        'GET',
+        '/1.0/networks/{0}'.format(name),
+        ok_error_codes=[404])
 
-        :param module: Processed Ansible Module.
-        :type module: ``object``
-        """
-        self.module = module
-        self.name = self.module.params['name']
-        self._build_config()
-        self.state = self.module.params['state']
-        self.new_name = self.module.params.get('new_name', None)
 
-        self.url = self.module.params['url']
-        self.key_file = self.module.params.get('key_file', None)
-        self.cert_file = self.module.params.get('cert_file', None)
-        self.debug = self.module._verbosity >= 4
-        try:
-            self.client = LXDClient(
-                self.url, key_file=self.key_file, cert_file=self.cert_file,
-                debug=self.debug
-            )
-        except LXDClientException as e:
-            self.module.fail_json(msg=e.msg)
-        self.trust_password = self.module.params.get('trust_password', None)
-        self.actions = []
+def lxd_create_network(client, name, config):
+    client.do(
+        'POST',
+        '/1.0/networks',
+        config)
 
-    def _build_config(self):
-        self.config = {}
-        for attr in CONFIG_PARAMS:
-            param_val = self.module.params.get(attr, None)
-            if attr == 'config':
-                if param_val is None:
-                    param_val = {}
-                NETWORKS_CONFIG_DEFAULTS.update(param_val)
-                param_val = NETWORKS_CONFIG_DEFAULTS
-            if param_val is not None:
-                self.config[attr] = param_val
 
-    def _get_network_json(self):
-        return self.client.do(
-            'GET', '/1.0/networks/{0}'.format(self.name),
-            ok_error_codes=[404]
-        )
+def lxd_replace_network(client, name, config):
+    client.do(
+        'PUT',
+        '/1.0/networks/{0}'.format(name),
+        config)
 
-    @staticmethod
-    def _network_json_to_module_state(resp_json):
-        if resp_json['type'] == 'error':
-            return 'absent'
-        return 'present'
 
-    def _update_network(self):
-        if self.state == 'present':
-            if self.old_state == 'absent':
-                if self.new_name is None:
-                    self._create_network()
-                else:
-                    self.module.fail_json(
-                        msg='new_name must not be set when the network does not exist and the specified state is present',
-                        changed=False)
-            else:
-                if self.new_name is not None and self.new_name != self.name:
-                    self._rename_network()
-                if self._needs_to_apply_network_configs():
-                    self._apply_network_configs()
-        elif self.state == 'absent':
-            if self.old_state == 'present':
-                if self.new_name is None:
-                    self._delete_network()
-                else:
-                    self.module.fail_json(
-                        msg='new_name must not be set when the network exists and the specified state is absent',
-                        changed=False)
+def lxd_rename_network(client, name, new_name):
+    client.do(
+        'POST',
+        '/1.0/networks/{0}'.format(name),
+        {PARAM_NAME: new_name})
 
-    def _create_network(self):
-        config = self.config.copy()
-        config['name'] = self.name
-        self.client.do('POST', '/1.0/networks', config)
-        self.actions.append('create')
 
-    def _rename_network(self):
-        config = {'name': self.new_name}
-        self.client.do('POST', '/1.0/networks/{}'.format(self.name), config)
-        self.actions.append('rename')
-        self.name = self.new_name
+def lxd_delete_network(client, name):
+    client.do(
+        'DELETE',
+        '/1.0/networks/{0}'.format(name))
 
-    def _needs_to_change_network_config(self, key):
-        if key not in self.config:
-            return False
-        old_configs = self.old_network_json['metadata'].get(key, None)
-        return self.config[key] != old_configs
 
-    def _needs_to_apply_network_configs(self):
-        return (
-            self._needs_to_change_network_config('config') or
-            self._needs_to_change_network_config('description')
-        )
+def read_module_config(config):
+    if config is None:
+        return DEFAULT_LXD_CONFIG
+    else:
+        return ast.literal_eval(config)
 
-    def _apply_network_configs(self):
-        config = self.old_network_json.copy()
-        for k, v in self.config.items():
-            config[k] = v
-        self.client.do('PUT', '/1.0/networks/{}'.format(self.name), config)
-        self.actions.append('apply_network_configs')
 
-    def _delete_network(self):
-        self.client.do('DELETE', '/1.0/networks/{}'.format(self.name))
-        self.actions.append('delete')
+def make_lxd_config(name=None,
+                    description='',
+                    inner_config=None):
+    r = {
+        PARAM_NAME: name,
+        PARAM_DESCRIPTION: description,
+        PARAM_CONFIG: {k: v
+                       for k, v in inner_config.items()
+                       if v is not None}
+    }
 
-    def run(self):
-        """Run the main method."""
+    return {k: v
+            for k, v in r.items()
+            if v is not None}
 
-        try:
-            if self.trust_password is not None:
-                self.client.authenticate(self.trust_password)
 
-            self.old_network_json = self._get_network_json()
+def is_update_required(module_config, lxd_config):
+    # Check if description changed.
+    module_description = module_config.get(PARAM_DESCRIPTION, "")
+    lxd_description = lxd_config.get(PARAM_DESCRIPTION, "")
+    if module_description != lxd_description:
+        return True
 
-            self.old_state = self._network_json_to_module_state(self.old_network_json)
-            self._update_network()
+    # Check if inner config changed.
+    module_inner_config = module_config.get(PARAM_CONFIG, {})
+    lxd_inner_config = lxd_config.get(PARAM_CONFIG, {})
 
-            state_changed = len(self.actions) > 0
-            result_json = {
-                'changed': state_changed,
-                'old_state': self.old_state,
-                'actions': self.actions
-            }
-            if self.client.debug:
-                result_json['logs'] = self.client.logs
-            self.module.exit_json(**result_json)
-        except LXDClientException as e:
-            state_changed = len(self.actions) > 0
-            fail_params = {
-                'msg': e.msg,
-                'changed': state_changed,
-                'actions': self.actions
-            }
-            if self.client.debug:
-                fail_params['logs'] = e.kwargs['logs']
-            self.module.fail_json(**fail_params)
+    # Keys of the items in module_inner_config having 'auto' as their value.
+    module_inner_config_auto_keys = [k
+                                     for k, v in module_inner_config.items()
+                                     if v == VAL_AUTO]
+
+    module_inner_config_without_auto = \
+        {k: v
+         for k, v in module_inner_config.items()
+         if k not in module_inner_config_auto_keys}
+
+    # lxd_inner_config modified as such:
+    #   - has the same keys as module_inner_config
+    #   - if the key has not an 'auto' value in module_config
+    #     or its value is 'none' then it is kept.
+    common_lxd_inner_config = {k: v
+                               for k, v in lxd_inner_config.items()
+                               if (k in module_inner_config.keys() and
+                                   (k not in module_inner_config_auto_keys or
+                                    v == VAL_NONE))}
+
+    if common_lxd_inner_config != module_inner_config_without_auto:
+        return True
+
+    return False
 
 
 def main():
-    """Ansible Main module."""
-
     module = AnsibleModule(
-        argument_spec=dict(
-            name=dict(
-                type='str',
-                required=True
-            ),
-            new_name=dict(
-                type='str',
-            ),
-            config=dict(
-                type='dict',
-            ),
-            description=dict(
-                type='str',
-            ),
-            state=dict(
-                choices=NETWORKS_STATES,
-                default='present'
-            ),
-            url=dict(
-                type='str',
-                default='unix:/var/lib/lxd/unix.socket'
-            ),
-            key_file=dict(
-                type='str',
-                default='{}/.config/lxc/client.key'.format(os.environ['HOME'])
-            ),
-            cert_file=dict(
-                type='str',
-                default='{}/.config/lxc/client.crt'.format(os.environ['HOME'])
-            ),
-            trust_password=dict(type='str', no_log=True)
-        ),
-        supports_check_mode=False,
-    )
+        argument_spec=ARGUMENT_SPEC,
+        supports_check_mode=False)
 
-    lxd_manage = LXDNetworkManagement(module=module)
-    lxd_manage.run()
+    debug = module._verbosity >= 4
+    actions = []
+
+    url = module.params[PARAM_URL]
+    key_file = module.params.get(PARAM_KEY_FILE, None)
+    cert_file = module.params.get(PARAM_CERT_FILE, None)
+
+    try:
+        client = LXDClient(
+            url,
+            key_file=key_file,
+            cert_file=cert_file,
+            debug=debug)
+    except LXDClientException as e:
+        module.fail_json(msg=e.msg)
+
+    trust_password = module.params.get(PARAM_TRUST_PASSWORD, None)
+
+    if trust_password is not None:
+        client.authenticate(trust_password)
+
+    name = module.params[PARAM_NAME]
+    description = module.params[PARAM_DESCRIPTION]
+    state = module.params[PARAM_STATE]
+    new_name = module.params.get(PARAM_NEW_NAME, None)
+
+    try:
+        lxd_net = lxd_get_network(client, name)
+        lxd_net_state = (STATE_ABSENT
+                         if lxd_net[KEY_TYPE] == VAL_ERROR
+                         else STATE_PRESENT)
+
+        raw_module_inner_config = module.params.get(PARAM_CONFIG, None)
+        module_config = make_lxd_config(
+            name=name,
+            description=description,
+            inner_config=read_module_config(raw_module_inner_config))
+        lxd_config = lxd_net.get(KEY_METADATA, {})
+
+        if state == STATE_PRESENT:
+
+            if lxd_net_state == STATE_ABSENT:
+                if new_name is None:
+                    lxd_create_network(client, name,
+                                       module_config)
+                    actions.append(ACTION_CREATE)
+                else:
+                    module.fail_json(
+                        msg=str("The 'new_name' parameter must not be "
+                                "provided when the specified network "
+                                "does not exist and the required state "
+                                "is 'present'."),
+                        changed=False)
+
+            else:  # lxd_net_state == STATE_PRESENT
+
+                if new_name is not None and new_name != name:
+                    lxd_rename_network(client, name, new_name)
+                    actions.append(ACTION_RENAME)
+
+                if is_update_required(module_config, lxd_config):
+                    lxd_replace_network(client, name, module_config)
+                    actions.append(ACTION_UPDATE)
+
+        else:  # state == STATE_ABSENT
+
+            if lxd_net_state == STATE_PRESENT:
+                if new_name is None:
+                    lxd_delete_network(client, name)
+                    actions.append(ACTION_DELETE)
+                else:
+                    module.fail_json(
+                        msg=str("The 'new_name' parameter must not be "
+                                "provided when the specified network "
+                                "does not exist and the required state "
+                                "is 'absent'."),
+                        changed=False)
+
+    except LXDClientException as e:
+        result = {
+            KEY_MSG: e.msg,
+            KEY_CHANGED: len(actions) > 0,
+            KEY_ACTIONS: actions
+        }
+
+        if client.debug:
+            result[KEY_LOGS] = client.logs
+
+        module.fail_json(**result)
+
+    else:
+        result = {
+            KEY_CHANGED: len(actions) > 0,
+            KEY_OLD_STATE: lxd_net_state,
+            KEY_ACTIONS: actions
+        }
+
+        if client.debug:
+            result[KEY_LOGS] = client.logs
+
+        module.exit_json(**result)
 
 
 if __name__ == '__main__':
