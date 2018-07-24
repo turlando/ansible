@@ -43,7 +43,10 @@ options:
           - If either ipv4.address or ipv6.address are not set in the config
             a value of none will be defaulted.
         required: false
-        default: {'ipv4.address': none, 'ipv6.address': none}
+        default:
+            ipv4.nat: true
+            ipv4.address: none
+            ipv6.address: none
     new_name:
         description:
           - A new name of a network.
@@ -67,12 +70,12 @@ options:
         description:
           - The client certificate key file path.
         required: false
-        default: '"{}/.config/lxc/client.key" .format(os.environ["HOME"])'
+        default: '~/.config/lxc/client.key'
     cert_file:
         description:
           - The client certificate file path.
         required: false
-        default: '"{}/.config/lxc/client.crt" .format(os.environ["HOME"])'
+        default: '~/.config/lxc/client.crt'
     trust_password:
         description:
           - The client trusted password.
@@ -189,6 +192,7 @@ KEY_REQUIRED = 'required'
 KEY_TYPE = 'type'
 
 TYPE_STR = 'str'
+TYPE_DICT = 'dict'
 
 KEY_IPV4_ADDR = 'ipv4.address'
 KEY_IPV4_NAT = 'ipv4.nat'
@@ -221,8 +225,8 @@ KEYS_LXD_CONFIG = [
 ]
 
 DEFAULT_URL = 'unix:/var/lib/lxd/unix.socket'
-DEFAULT_KEY_FILE = '{}/.config/lxc/client.key'.format(HOME)
-DEFAULT_CERT_FILE = '{}/.config/lxc/client.crt'.format(HOME)
+DEFAULT_HUMAN_READABLE_KEY_FILE = '~/.config/lxc/client.key'
+DEFAULT_HUMAN_READABLE_CERT_FILE = '~/.config/lxc/client.crt'
 
 DEFAULT_LXD_CONFIG = {
     KEY_IPV4_NAT: VAL_TRUE,
@@ -241,7 +245,8 @@ ARGUMENT_SPEC = {
     },
 
     PARAM_CONFIG: {
-        KEY_TYPE: TYPE_STR
+        KEY_TYPE: TYPE_DICT,
+        KEY_DEFAULT: DEFAULT_LXD_CONFIG
     },
 
     PARAM_DESCRIPTION: {
@@ -263,12 +268,12 @@ ARGUMENT_SPEC = {
 
     PARAM_KEY_FILE: {
         KEY_TYPE: TYPE_STR,
-        KEY_DEFAULT: DEFAULT_KEY_FILE
+        KEY_DEFAULT: DEFAULT_HUMAN_READABLE_KEY_FILE
     },
 
     PARAM_CERT_FILE: {
         KEY_TYPE: TYPE_STR,
-        KEY_DEFAULT: DEFAULT_CERT_FILE
+        KEY_DEFAULT: DEFAULT_HUMAN_READABLE_CERT_FILE
     },
 
     PARAM_TRUST_PASSWORD: {
