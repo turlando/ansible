@@ -44,15 +44,16 @@ options:
             a value of none will be defaulted.
         required: false
         default:
-            ipv4.nat: true
-            ipv4.address: none
-            ipv6.address: none
+            ipv4.nat: 'true'
+            ipv4.address: 'none'
+            ipv6.address: 'none'
     new_name:
         description:
           - A new name of a network.
           - If this parameter is specified a network will be renamed to this name.
             See U(https://github.com/lxc/lxd/blob/master/doc/rest-api.md#post-12)
         required: false
+        default: ''
     state:
         choices:
           - present
@@ -194,11 +195,8 @@ KEY_TYPE = 'type'
 TYPE_STR = 'str'
 TYPE_DICT = 'dict'
 
-KEY_IPV4_ADDR = 'ipv4.address'
-KEY_IPV4_NAT = 'ipv4.nat'
-KEY_IPV6_ADDR = 'ipv6.address'
-
 VAL_AUTO = 'auto'
+VAL_TRUE = 'true'
 VAL_NONE = 'none'
 VAL_ERROR = 'error'
 
@@ -227,8 +225,12 @@ DEFAULT_URL = 'unix:/var/lib/lxd/unix.socket'
 DEFAULT_HUMAN_READABLE_KEY_FILE = '~/.config/lxc/client.key'
 DEFAULT_HUMAN_READABLE_CERT_FILE = '~/.config/lxc/client.crt'
 
+KEY_IPV4_ADDR = 'ipv4.address'
+KEY_IPV4_NAT = 'ipv4.nat'
+KEY_IPV6_ADDR = 'ipv6.address'
+
 DEFAULT_LXD_CONFIG = {
-    KEY_IPV4_NAT: True,
+    KEY_IPV4_NAT: VAL_TRUE,
     KEY_IPV4_ADDR: VAL_NONE,
     KEY_IPV6_ADDR: VAL_NONE
 }
@@ -236,7 +238,7 @@ DEFAULT_LXD_CONFIG = {
 ARGUMENT_SPEC = {
     PARAM_NAME: {
         KEY_TYPE: TYPE_STR,
-        KEY_REQUIRED: True,
+        KEY_REQUIRED: VAL_TRUE,
     },
 
     PARAM_NEW_NAME: {
@@ -249,7 +251,8 @@ ARGUMENT_SPEC = {
     },
 
     PARAM_DESCRIPTION: {
-        KEY_TYPE: TYPE_STR
+        KEY_TYPE: TYPE_STR,
+        KEY_DEFAULT: ''
     },
 
     PARAM_STATE: {
@@ -284,7 +287,7 @@ ARGUMENT_SPEC = {
 def lxd_get_network(client, name):
     return client.do(
         'GET',
-        '/1.0/networks/{0}'.format(name),
+        '/1.0/networks/{}'.format(name),
         ok_error_codes=[404])
 
 
@@ -298,21 +301,21 @@ def lxd_create_network(client, name, config):
 def lxd_replace_network(client, name, config):
     client.do(
         'PUT',
-        '/1.0/networks/{0}'.format(name),
+        '/1.0/networks/{}'.format(name),
         config)
 
 
 def lxd_rename_network(client, name, new_name):
     client.do(
         'POST',
-        '/1.0/networks/{0}'.format(name),
+        '/1.0/networks/{}'.format(name),
         {PARAM_NAME: new_name})
 
 
 def lxd_delete_network(client, name):
     client.do(
         'DELETE',
-        '/1.0/networks/{0}'.format(name))
+        '/1.0/networks/{}'.format(name))
 
 
 def read_module_config(config):
@@ -325,17 +328,12 @@ def read_module_config(config):
 def make_lxd_config(name=None,
                     description='',
                     inner_config=None):
-    r = {
+    return {
         PARAM_NAME: name,
         PARAM_DESCRIPTION: description,
-        PARAM_CONFIG: {k: v
-                       for k, v in inner_config.items()
-                       if v is not None}
+        PARAM_CONFIG: inner_config
     }
 
-    return {k: v
-            for k, v in r.items()
-            if v is not None}
 
 
 def is_update_required(module_config, lxd_config):
@@ -412,11 +410,11 @@ def main():
                          if lxd_net[KEY_TYPE] == VAL_ERROR
                          else STATE_PRESENT)
 
-        raw_module_inner_config = module.params.get(PARAM_CONFIG, None)
+        module_inner_config = module.params.get(PARAM_CONFIG, None)
         module_config = make_lxd_config(
             name=name,
             description=description,
-            inner_config=read_module_config(raw_module_inner_config))
+            inner_config=module_inner_config)
         lxd_config = lxd_net.get(KEY_METADATA, {})
 
         if state == STATE_PRESENT:
@@ -438,6 +436,7 @@ def main():
 
                 if new_name is not None and new_name != name:
                     lxd_rename_network(client, name, new_name)
+                    name = new_name
                     actions.append(ACTION_RENAME)
 
                 if is_update_required(module_config, lxd_config):
