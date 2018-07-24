@@ -200,7 +200,6 @@ KEY_IPV6_ADDR = 'ipv6.address'
 
 VAL_AUTO = 'auto'
 VAL_NONE = 'none'
-VAL_TRUE = 'true'
 VAL_ERROR = 'error'
 
 STATE_PRESENT = 'present'
@@ -229,7 +228,7 @@ DEFAULT_HUMAN_READABLE_KEY_FILE = '~/.config/lxc/client.key'
 DEFAULT_HUMAN_READABLE_CERT_FILE = '~/.config/lxc/client.crt'
 
 DEFAULT_LXD_CONFIG = {
-    KEY_IPV4_NAT: VAL_TRUE,
+    KEY_IPV4_NAT: True,
     KEY_IPV4_ADDR: VAL_NONE,
     KEY_IPV6_ADDR: VAL_NONE
 }
@@ -237,7 +236,7 @@ DEFAULT_LXD_CONFIG = {
 ARGUMENT_SPEC = {
     PARAM_NAME: {
         KEY_TYPE: TYPE_STR,
-        KEY_REQUIRED: True
+        KEY_REQUIRED: True,
     },
 
     PARAM_NEW_NAME: {
